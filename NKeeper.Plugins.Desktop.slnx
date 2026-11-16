@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="backend/NKeeper.Plugins.Desktop.csproj" />
+  <Project Path="tests/NKeeper.Plugins.Desktop.Tests.csproj" />
+</Solution>

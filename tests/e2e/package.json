@@ -1,0 +1,14 @@
+{
+  "name": "@nkeeper/plugin-desktop-e2e",
+  "description": "A real-browser test of the desktop plugin on an installed NKeeper (docs/architecture.md §7.21).",
+  "private": true,
+  "license": "MIT",
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "desktop": "node desktop.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.65.0"
+  }
+}

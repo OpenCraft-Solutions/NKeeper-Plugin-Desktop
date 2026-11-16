@@ -1,0 +1,169 @@
+name: Release
+
+# A tag v<version> releases the plugin: build and test, pack desktop-<version>.nkp signed with NKeeper's official
+# key, and publish a GitHub release with the package and its SHA-256 (docs/architecture.md §9).
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NUGET_USERNAME: ${{ github.actor }}
+  NUGET_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  # Everything that runs the repository's code and tests, with no access to the signing key.
+  verify:
+    name: Check, build and test
+    runs-on: [self-hosted, nkeeper]
+    timeout-minutes: 30
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: The tag matches the manifest, and is on main
+        id: version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          manifest=$(jq -r .version backend/nkeeper-plugin.json)
+          package=$(jq -r .version frontend/package.json)
+          if [ "$TAG" != "v$manifest" ]; then
+            echo "The tag $TAG doesn't match the manifest's version $manifest." >&2
+            exit 1
+          fi
+          if [ "$package" != "$manifest" ]; then
+            echo "frontend/package.json says $package, the manifest $manifest." >&2
+            exit 1
+          fi
+          if ! [[ "$manifest" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "The version $manifest isn't a SemVer version." >&2
+            exit 1
+          fi
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "The tagged commit isn't on main." >&2
+            exit 1
+          fi
+          echo "version=$manifest" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          global-json-file: global.json
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install the frontend's packages (from the lock file)
+        working-directory: frontend
+        run: npm ci
+
+      - name: Lint and type-check the frontend
+        working-directory: frontend
+        run: |
+          npm run lint
+          npm run typecheck
+
+      - name: Restore
+        run: dotnet restore NKeeper.Plugins.Desktop.slnx
+
+      - name: Build
+        run: dotnet build NKeeper.Plugins.Desktop.slnx --no-restore --configuration Release
+
+      - name: Test
+        run: dotnet test NKeeper.Plugins.Desktop.slnx --no-build --configuration Release
+
+  # The only job with the official key. It's in the release environment, so an owner approves each run.
+  release:
+    name: Sign and publish
+    needs: verify
+    # Signing runs on the single-use runner, reset after every job, so nothing an earlier job left behind can
+    # reach the key.
+    runs-on: nkeeper-clean
+    timeout-minutes: 20
+    environment: release
+    permissions:
+      contents: write
+      packages: read
+    env:
+      VERSION: ${{ needs.verify.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          global-json-file: global.json
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install the frontend's packages (from the lock file)
+        working-directory: frontend
+        run: npm ci
+
+      - name: Restore
+        run: dotnet restore backend/NKeeper.Plugins.Desktop.csproj
+
+      # The key exists as a file only inside this step: it is written with owner-only permissions, handed to the
+      # build by path, and removed when the step ends, however it ends. It is never echoed.
+      - name: Pack and sign with the official key
+        env:
+          NKEEPER_RELEASE_KEY: ${{ secrets.NKEEPER_RELEASE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$NKEEPER_RELEASE_KEY" ]; then
+            echo "NKEEPER_RELEASE_KEY isn't set in the release environment." >&2
+            exit 1
+          fi
+          key_dir=$(mktemp -d "$RUNNER_TEMP/release-key.XXXXXX")
+          trap 'rm -rf "$key_dir"' EXIT
+          chmod 700 "$key_dir"
+          (umask 077; printf '%s\n' "$NKEEPER_RELEASE_KEY" > "$key_dir/release.private.pem")
+          unset NKEEPER_RELEASE_KEY
+          dotnet build backend/NKeeper.Plugins.Desktop.csproj --no-restore --configuration Release \
+            -p:NKeeperSigningKey="$key_dir/release.private.pem" -p:NKeeperPluginPackages="$GITHUB_WORKSPACE/artifacts/release/"
+
+      - name: Checksum
+        run: |
+          set -euo pipefail
+          cd artifacts/release
+          test "$(ls desktop-*.nkp | wc -l)" -eq 1
+          test -f "desktop-$VERSION.nkp"
+          sha256sum "desktop-$VERSION.nkp" > "desktop-$VERSION.nkp.sha256"
+          cat "desktop-$VERSION.nkp.sha256"
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          sha=$(cut -d' ' -f1 "artifacts/release/desktop-$VERSION.nkp.sha256")
+          prerelease=()
+          if [[ "$VERSION" == *-* ]]; then prerelease=(--prerelease); fi
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --title "Desktop $VERSION" \
+            --notes "The desktop plugin $VERSION, signed with NKeeper's official key.
+
+          SHA-256 of \`desktop-$VERSION.nkp\`: \`$sha\`" \
+            "${prerelease[@]}" \
+            "artifacts/release/desktop-$VERSION.nkp" "artifacts/release/desktop-$VERSION.nkp.sha256"
