@@ -1,0 +1,47 @@
+# --- Secrets / local configuration ---
+.env
+.env.*
+!.env.example
+*.local.json
+secrets/
+*.pfx
+*.pem
+*.key
+*.crt
+
+# --- .NET ---
+bin/
+obj/
+*.user
+*.suo
+.vs/
+TestResults/
+*.trx
+coverage/
+*.coverage
+publish/
+artifacts/
+
+# --- Node / Vite ---
+node_modules/
+dist/
+*.tsbuildinfo
+.vite/
+npm-debug.log*
+
+# --- Editors / OS ---
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+
+# --- Local development keys (plugin signing) ---
+.dev/
+
+# --- Local packages (see README: building before the SDK is published) ---
+local-feed/
+
+# Screenshots from the browser test.
+tests/e2e/*.png
