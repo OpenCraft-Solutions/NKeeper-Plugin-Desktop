@@ -23,7 +23,7 @@ jobs:
   # Everything that runs the repository's code and tests, with no access to the signing key.
   verify:
     name: Check, build and test
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, nkeeper]
     timeout-minutes: 30
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -92,7 +92,7 @@ jobs:
   release:
     name: Sign and publish
     needs: verify
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, nkeeper]
     timeout-minutes: 20
     environment: release
     permissions:
