@@ -87,7 +87,7 @@ Both restore from GitHub Packages with the workflow's own token.
 Releases are signed with NKeeper's official key, and only through `.github/workflows/release.yml`. To release a version:
 
 1. Set `version` in `backend/nkeeper-plugin.json` (and `frontend/package.json`), and merge it to `main`.
-2. Tag the commit `v<version>`, for example `v0.1.0`, and push the tag.
+2. Tag the commit `v<version>`, for example `v1.0.0`, and push the tag.
 3. The workflow refuses a tag that doesn't match the manifest's version, or that isn't on `main`. Then it builds and tests the plugin.
 4. The `release` job runs in the `release` environment, which an owner has to approve. It holds `NKEEPER_RELEASE_KEY`, the official key's private half, as a PEM. The job writes the key to a private temporary file for the packing step alone, never prints it, and deletes it at the end of the job.
 5. It packs `desktop-<version>.nkp`, signs it, verifies it, and publishes a GitHub release with the package and its SHA-256 (also as `desktop-<version>.nkp.sha256`).
